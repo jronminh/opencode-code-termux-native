@@ -1,0 +1,103 @@
+<!-- opencode-code-termux-native:begin -->
+# Environment: OpenCode native on Termux/Android
+
+_This section is installed and kept in sync by [opencode-code-termux-native](https://github.com/C04-wq/opencode-code-termux-native)'s `install.sh`, along with the `opencode-termux-doctor` skill it installs alongside it, and is wired into your global `~/.config/opencode/opencode.jsonc` via `instructions` so opencode reads it at every session start. A future install/update overwrites everything between the `opencode-code-termux-native:begin`/`:end` markers, so don't hand-edit inside them — fix `scripts/*.sh`, `environment.md.template`, or `skills/opencode-termux-doctor/SKILL.md` in that repo instead, then re-run `install.sh`. Notes that don't belong there (drift you've observed but haven't turned into a proper fix yet) belong outside the markers, elsewhere in this file._
+
+You are NOT running on a regular Linux system. This opencode is the
+aarch64 build published by the [C04-wq/opencode-termux](https://github.com/C04-wq/opencode-termux)
+community project: a Bun-based binary linked against **musl**, whose ELF
+interpreter is already patched (by their installer) to the musl loader at
+`~/.opencode/ld-musl-aarch64.so.1`. A real `android-arm64`/Bionic build is
+not published; this is a community workaround, not official support.
+Consequence: `process.platform` may report `linux` or `android` — don't
+branch any important decision on that alone.
+
+**The launcher matters.** `$PREFIX/bin/opencode` is a wrapper this repo
+installs that `exec`s the loader explicitly:
+
+    exec "$HOME/.opencode/ld-musl-aarch64.so.1" \
+      --library-path "$HOME/.opencode" \
+      "$HOME/.opencode/opencode" "$@"
+
+That `--library-path` form is **mandatory** for this musl build (direct exec
+fails to find `libstdc++.so.6`), and it scopes the library search to that
+one exec — nothing leaks into children. It replaces the stock npm launcher,
+which exported `LD_PRELOAD`/`LD_LIBRARY_PATH` env vars that crashed/hung the
+Bionic bash and ripgrep that opencode itself spawns. Never re-export either
+var (see the `opencode-termux-doctor` skill), and never hand-edit the
+wrapper or anything under `~/.opencode/opencode-native/`.
+
+If opencode, grep, bash, find, or an update misbehaves in ANY of these ways —
+segfault on launch, "invalid ELF header", "cannot execute", grep/`-G`
+shared-library errors, bash/ripgrep hanging or dying mid-tool-call,
+`LD_PRELOAD`/`LD_LIBRARY_PATH` weirdness, `patchelf`/loader questions, "is
+this install even patched?" — **invoke the `opencode-termux-doctor` skill
+first**. It has the full trap list (8 documented failure modes), the
+self-repair design, and the golden rules for fixing this safely without
+guessing from first principles.
+
+Quick sanity check anytime, without invoking the skill:
+`bash ~/.opencode/opencode-native/doctor.sh`
+
+Unlike Claude Code, opencode has **no hook system**, so there is no
+SessionStart doctor check inside opencode itself. Instead `install.sh`
+wires the same self-heal into `~/.bashrc` (sources
+`~/.opencode/opencode-native/autocheck.sh` on every new Termux shell) — it
+self-repairs the interpreter, keeps the autoupdater off, and runs
+`update.sh --check-only`. That recognition of a changed binary lives in
+`doctor.sh` instead: its output carries a `UPDATED:` line when the opencode
+binary differs from the last observed version (e.g. after
+`termux-update-opencode`). If you see that, mention the version change to
+the user in your first reply (old → new) — don't stay silent just because
+it isn't an error.
+
+You also have a few Android-native bridges available directly as shell
+commands (all from `termux-api`, needs the Termux:API app installed and
+granted — `command -v termux-notification` is a quick way to check):
+
+- **`termux-open <path-or-url>`** — opens a file or URL in whatever Android
+  app the user has set as the default handler for it (e.g. a PDF viewer, an
+  image viewer, a browser). Use this when the user asks to view/open
+  something you just produced (a report, a generated image, a rendered
+  file) rather than just naming the path and leaving it to them.
+- **`termux-share <path>`** — opens Android's native share sheet for a
+  file, so the user can send it to another app (Files, a messaging app,
+  email, ...) without leaving Termux. Use this when the user asks to
+  share/send a file somewhere, or when handing off a finished artifact
+  makes more sense as a share action than just printing its path.
+- Both are fire-and-forget from your side (they hand off to Android and
+  return immediately) — no output to parse, just call them and mention
+  what you did.
+- If the device's battery is low and not charging (`termux-battery-status`
+  reports `"status": "DISCHARGING"` / `"charging": false`), take it as real
+  signal to prefer batching work over kicking off long unattended
+  background tasks (including `termux-opencode-job` runs) until it's
+  charging.
+- **`termux-opencode-job`** — schedules a headless `opencode run "<prompt>"`
+  through Android's real JobScheduler (`add`/`list`/`remove`/`run`/`log`;
+  `termux-opencode-job --help` for the full syntax), not plain cron — a
+  background loop/cron job gets killed by Android the moment the screen
+  locks, but a JobScheduler-backed one actually wakes the device. Suggest
+  this when the user wants something to run periodically/unattended on
+  this device (e.g. "check X every 15 minutes", "run the test suite
+  nightly") rather than proposing a `loop`/`schedule`-skill approach that
+  assumes the session stays open and awake.
+- **`termux-opencode-features status`** — lists every optional capability
+  this setup can toggle (what each does, whether it's currently on, and
+  any safety notes) in its own output — e.g. seeing/driving the actual
+  Android screen for debugging something `termux-api` can't reach.
+  Features get added here over time without this file changing, so run
+  this (not memory of an earlier session) whenever a task might benefit
+  from a capability beyond bare Termux, rather than assuming you already
+  know the full list. `enable <feature>`/`disable <feature>` toggles one
+  on/off — ask the user first if `status` marks that feature
+  security-sensitive.
+- Deeper technical detail on how this whole setup fits together (every
+  staged script's role, the pattern behind opt-in features, why some
+  things are staged vs. installed vs. merged into `~/.config/opencode/`)
+  lives at `~/.opencode/opencode-native/docs/architecture.md` — read it on
+  demand when actually working on this setup itself (not needed for
+  ordinary use). This file is deliberately kept short instead of growing
+  with every new feature; `docs/architecture.md` and
+  `termux-opencode-features status` absorb that detail instead.
+<!-- opencode-code-termux-native:end -->

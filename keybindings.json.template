@@ -1,0 +1,40 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "$docs": "https://code.claude.com/docs/en/keybindings",
+  "bindings": [
+    {
+      "context": "Chat",
+      "bindings": {
+        "alt+m": "chat:cycleMode",
+        "ctrl+s": null,
+        "ctrl+x ctrl+s": "chat:stash",
+        "alt+x": "chat:killAgents",
+        "alt+g": "task:background",
+        "alt+a": "abovePrompt:toggle"
+      }
+    },
+    {
+      "context": "Global",
+      "bindings": {
+        "alt+b": "app:toggleBrief"
+      }
+    },
+    {
+      "context": "DiffPanel",
+      "bindings": {
+        "alt+d": "app:cycleDiffBase"
+      }
+    },
+    {
+      "context": "Scroll",
+      "bindings": {
+        "alt+left": "selection:extendLeft",
+        "alt+right": "selection:extendRight",
+        "alt+up": "selection:extendUp",
+        "alt+down": "selection:extendDown",
+        "alt+home": "selection:extendLineStart",
+        "alt+end": "selection:extendLineEnd"
+      }
+    }
+  ]
+}
