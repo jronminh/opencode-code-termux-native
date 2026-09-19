@@ -84,6 +84,7 @@ cmd_add() {
   else
     echo "Scheduled '$name' (job-id $id), one-shot — runs once when constraints (network/charging) are met."
   fi
+  command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.add "{\"job\":\"opencode\",\"name\":\"$name\",\"id\":$id}" 2>/dev/null || true
 }
 
 cmd_list() {
@@ -114,6 +115,7 @@ cmd_remove() {
   termux-job-scheduler --cancel --job-id "$id" || true
   rm -f "$f" "$JOBS_DIR/$name.sh" "$JOBS_DIR/$name.log"
   echo "Removed '$name' (job-id $id)."
+  command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.remove "{\"job\":\"opencode\",\"name\":\"$name\",\"id\":$id}" 2>/dev/null || true
 }
 
 cmd_run() {

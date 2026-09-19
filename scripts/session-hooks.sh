@@ -76,6 +76,7 @@ battery_context() {
 }
 
 cmd_submit() {
+  command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit session.start '{"hook":"submit"}' 2>/dev/null || true
   command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock 2>/dev/null
   # Sweep state files from crashed/never-stopped sessions so STATE_DIR
   # doesn't grow unbounded.
@@ -89,6 +90,7 @@ cmd_submit() {
 }
 
 cmd_stop() {
+  command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit session.end '{"hook":"stop"}' 2>/dev/null || true
   local f info started others
   f=$(state_file)
   info=$(
