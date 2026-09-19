@@ -50,10 +50,11 @@ cmd_status() {
 cmd_enable() {
   case "${1:-}" in
     notifications)
-      enable_notifications && echo "notifications enabled — open a NEW Termux session for it to take effect"
+      enable_notifications && { command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"notifications","action":"enable"}' 2>/dev/null || true; echo "notifications enabled — open a NEW Termux session for it to take effect"; }
       ;;
     adb-bridge)
       enable_adb_bridge "$SKILL_SRC_DIR/adb-bridge/SKILL.md" && {
+        command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"adb-bridge","action":"enable"}' 2>/dev/null || true
         echo "adb-bridge enabled — open a NEW Termux session for the Stop hook to take effect"
         echo "read the adb-bridge skill (~/.claude/skills/adb-bridge/SKILL.md) before pairing a device"
       }
@@ -68,10 +69,10 @@ cmd_enable() {
 cmd_disable() {
   case "${1:-}" in
     notifications)
-      disable_notifications && echo "notifications disabled — open a NEW Termux session for it to take effect"
+      disable_notifications && { command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"notifications","action":"disable"}' 2>/dev/null || true; echo "notifications disabled — open a NEW Termux session for it to take effect"; }
       ;;
     adb-bridge)
-      disable_adb_bridge && echo "adb-bridge disabled (skill + Stop hook removed) — if a device is still connected, also turn off Wireless debugging in Developer options"
+      disable_adb_bridge && { command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"adb-bridge","action":"disable"}' 2>/dev/null || true; echo "adb-bridge disabled (skill + Stop hook removed) — if a device is still connected, also turn off Wireless debugging in Developer options"; }
       ;;
     "")
       echo "usage: termux-claude-features disable <notifications|adb-bridge>" >&2; return 2 ;;

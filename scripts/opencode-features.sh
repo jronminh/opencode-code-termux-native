@@ -50,6 +50,7 @@ cmd_enable() {
   case "${1:-}" in
     adb-bridge)
       enable_adb_bridge "$SKILL_SRC_DIR/adb-bridge/SKILL.md" && {
+        command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"adb-bridge","action":"enable"}' 2>/dev/null || true
         echo "adb-bridge enabled (skill installed)"
         echo "requires the termux-adb-bridge daemon; check with: ~/.opencode/opencode-native/adb-bridge.sh status"
       }
@@ -64,7 +65,7 @@ cmd_enable() {
 cmd_disable() {
   case "${1:-}" in
     adb-bridge)
-      disable_adb_bridge && echo "adb-bridge disabled (skill removed) — the shell-UID daemon is separate; stop it per ~/termux-adb-bridge/README.md if you're done"
+      disable_adb_bridge && { command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit feature.toggle '{"feature":"adb-bridge","action":"disable"}' 2>/dev/null || true; echo "adb-bridge disabled (skill removed) — the shell-UID daemon is separate; stop it per ~/termux-adb-bridge/README.md if you're done"; }
       ;;
     "")
       echo "usage: termux-opencode-features disable <adb-bridge>" >&2; return 2 ;;

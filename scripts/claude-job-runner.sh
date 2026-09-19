@@ -42,6 +42,7 @@ cd "$CWD" 2>/dev/null || cd "$HOME" || exit 1
 printf '{"session_id":"%s","cwd":"%s"}' "$SID" "$CWD" | "$DEST/session-hooks.sh" submit
 
 START=$(date +%s)
+command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.start "{\"job\":\"claude\",\"name\":\"$NAME\"}" 2>/dev/null || true
 {
   echo "=== $(date '+%Y-%m-%d %H:%M:%S %z') — job '$NAME' starting ==="
   echo "cwd: $CWD"
@@ -52,6 +53,7 @@ START=$(date +%s)
 RC=$?
 NOW=$(date +%s)
 echo "=== job '$NAME' finished (exit $RC, $((NOW - START))s) ===" >>"$LOG"
+command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.end "{\"job\":\"claude\",\"name\":\"$NAME\",\"rc\":$RC,\"seconds\":$((NOW - START))}" 2>/dev/null || true
 
 printf '{"session_id":"%s","cwd":"%s"}' "$SID" "$CWD" | "$DEST/session-hooks.sh" stop
 

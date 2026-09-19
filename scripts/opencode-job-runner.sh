@@ -43,6 +43,7 @@ cleanup() { command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock 
 trap cleanup EXIT
 
 START=$(date +%s)
+command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.start "{\"job\":\"opencode\",\"name\":\"$NAME\"}" 2>/dev/null || true
 {
   echo "=== $(date '+%Y-%m-%d %H:%M:%S %z') — job '$NAME' starting ==="
   echo "cwd: $CWD"
@@ -53,6 +54,7 @@ START=$(date +%s)
 RC=$?
 NOW=$(date +%s)
 echo "=== job '$NAME' finished (exit $RC, $((NOW - START))s) ===" >>"$LOG"
+command -v termux-hooks >/dev/null 2>&1 && termux-hooks emit job.end "{\"job\":\"opencode\",\"name\":\"$NAME\",\"rc\":$RC,\"seconds\":$((NOW - START))}" 2>/dev/null || true
 
 if [ "$RC" -ne 0 ] && command -v termux-notification >/dev/null 2>&1; then
   termux-notification --id "opencode-job-$NAME" --title "opencode job failed: $NAME" \
