@@ -101,6 +101,22 @@ AUTOUPD=$(grep -s OPENCODE_DISABLE_AUTOUPDATE "$WRAPPER" 2>/dev/null)
 CFG_AUTOUPD=$(jq -r 'if has("autoupdate") then (.autoupdate | tostring) else "not-set" end' "$CONFIG" 2>/dev/null || echo "unreadable-or-missing")
 emit autoupdater_disabled "== autoupdater off? (wrapper env + global config) ==" "${AUTOUPD:-OPENCODE_DISABLE_AUTOUPDATE NOT in wrapper — risk of overwritten binary}"$'\n'"global config autoupdate: $CFG_AUTOUPD (want: false)"
 
+if grep -qs 'BUN_JSC_forceRAMSize' "$WRAPPER" 2>/dev/null; then
+  _mt=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+  case "$_mt" in
+    ''|*[!0-9]*) JSC_MSG="ok: wrapper sets a JSC RAM cap (couldn't read /proc/meminfo to show the value)" ;;
+    *)
+      _want=$(( _mt * 1024 / 100 * 7 ))
+      [ "$_want" -lt 402653184 ] && _want=402653184
+      [ "$_want" -gt 805306368 ] && _want=805306368
+      JSC_MSG="ok: wrapper caps JSC RAM (Termux OOM guard) — ~$(( _want / 1048576 )) MB on this device"
+      ;;
+  esac
+else
+  JSC_MSG="NOT in wrapper — opencode sizes its heap off full RAM (~785 MB TUI) and can get Termux OOM-killed; re-run install.sh"
+fi
+emit jsc_ram_cap "== JSC RAM cap (Termux OOM guard) ==" "$JSC_MSG"
+
 CONFIG_BAK="$CONFIG.bak"
 if [ -e "$CONFIG_BAK" ]; then
   CONFIG_BAK_MSG="backup exists: $CONFIG_BAK ($(date -r "$CONFIG_BAK" '+%Y-%m-%d %H:%M' 2>/dev/null))"$'\n'"restore with: cp $CONFIG_BAK $CONFIG"
