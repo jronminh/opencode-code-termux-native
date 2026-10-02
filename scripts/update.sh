@@ -30,6 +30,11 @@ REQUIRED_FILES=(opencode ld-musl-aarch64.so.1 libc.musl-aarch64.so.1 libgcc_s.so
 BIN_DOWNLOAD_OPTS=(--connect-timeout 8 --speed-limit 1024 --speed-time 30 --retry 5 --retry-delay 3 --retry-all-errors -C -)
 SMALL_DOWNLOAD_OPTS=(--connect-timeout 5 --max-time $REQUEST_TIMEOUT)
 tmp=""
+# Must be bound before report_fail can run (set -u) — the loader-exists
+# check below can call it on the very first install, long before the
+# --check-only arg parsing further down would otherwise set this.
+CHECK_ONLY=0
+[ "${1:-}" = "--check-only" ] && CHECK_ONLY=1
 
 notify() {
   command -v termux-notification >/dev/null 2>&1 || return 0
@@ -135,7 +140,12 @@ $(cat "$errlog")"
 }
 
 mkdir -p "$DEST"
-[ -e "$LD" ] || report_fail "check loader" "Loader not found at $LD — the musl libs are missing from $OPENCODE_DIR. Run install.sh / termux-update-opencode to reinstall."
+# Only a problem if something is already installed — a bare-first-run
+# $OPENCODE_DIR legitimately has neither yet; the pipeline below creates
+# both. A missing loader alongside an existing binary means a corrupted
+# or partial previous install, which IS worth bailing out on.
+[ -e "$BIN" ] && [ ! -e "$LD" ] &&
+  report_fail "check loader" "Loader not found at $LD but $BIN exists — the musl libs are missing from $OPENCODE_DIR. Run install.sh / termux-update-opencode to reinstall."
 
 # --- CLI: --rollback / --unpin / --pin -------------------------------
 if [ "${1:-}" = "--rollback" ]; then
@@ -174,8 +184,6 @@ if [ "${1:-}" = "--pin" ] && [ -n "${2:-}" ]; then
   VER=$(printf '%s' "$2" | tr -d '[:space:]')
 fi
 
-CHECK_ONLY=0
-[ "${1:-}" = "--check-only" ] && CHECK_ONLY=1
 CHECK_OPTS=(--connect-timeout 3 --max-time 8)
 
 PINNED=0

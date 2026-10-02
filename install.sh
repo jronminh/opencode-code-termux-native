@@ -40,10 +40,16 @@ install_packages() {
   # dpkg's "keep your modified conffile?" prompt), so auto-keep the existing
   # config instead of hanging/failing on upgrades like openssl's.
   local opts=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-  pkg install "${opts[@]}" curl jq patchelf ripgrep tar coreutils file ca-certificates resolv-conf &&
+  pkg install "${opts[@]}" curl jq patchelf libc++ ripgrep tar coreutils file ca-certificates resolv-conf &&
     pkg update -y 2>/dev/null || true &&
-    pkg install "${opts[@]}" curl jq patchelf ripgrep tar coreutils file ca-certificates resolv-conf &&
-    [ "$(command -v patchelf)" ]
+    pkg install "${opts[@]}" curl jq patchelf libc++ ripgrep tar coreutils file ca-certificates resolv-conf &&
+    command -v patchelf >/dev/null &&
+    # patchelf is linked against a specific libc++ ABI; a stale libc++ left
+    # over from before a termux-tools update makes it present on PATH but
+    # unable to actually run ("CANNOT LINK EXECUTABLE ... cannot locate
+    # symbol"). Force libc++ current to match, then prove patchelf runs.
+    pkg install "${opts[@]}" --reinstall libc++ &&
+    patchelf --version >/dev/null 2>&1
 }
 
 stage_scripts() {
@@ -62,11 +68,15 @@ stage_scripts() {
   mkdir -p "$DEST/skill-sources/adb-bridge"
   install -m 600 "$REPO_DIR/skills/adb-bridge/SKILL.md" "$DEST/skill-sources/adb-bridge/SKILL.md"
   # docs/ — staged so this detail is available on-device on demand without
-  # needing the repo checkout.
-  mkdir -p "$DEST/docs"
-  for f in "$REPO_DIR"/docs/*.md; do
-    install -m 600 "$f" "$DEST/docs/$(basename "$f")"
-  done
+  # needing the repo checkout. Gitignored (local-only notes), so a fresh
+  # clone won't have it yet; skip rather than fail the install on it.
+  if [ -d "$REPO_DIR/docs" ]; then
+    mkdir -p "$DEST/docs"
+    for f in "$REPO_DIR"/docs/*.md; do
+      [ -e "$f" ] || continue
+      install -m 600 "$f" "$DEST/docs/$(basename "$f")"
+    done
+  fi
 }
 
 install_wrapper() {
