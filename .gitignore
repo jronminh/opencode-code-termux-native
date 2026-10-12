@@ -1,13 +1,9 @@
-# Never accidentally commit Anthropic's proprietary binary or any local
-# install artifacts if someone copies/tests inside a clone of this repo.
-claude
-claude.prev
-claude.rejected
-manifest.json
-manifest.json.prev
+# Never accidentally commit local install artifacts if someone tests inside
+# a clone of this repo.
+opencode
+opencode.prev
 *.lock
 *.log
-.repatch-history
 
 # Local-only investigation docs / planning notes - not for the public repo.
 docs/

@@ -2,10 +2,8 @@
 
 Run **opencode** natively on Termux/Android — no `proot-distro`, no Ubuntu
 chroot, no emulation layer. Patches the community aarch64 musl build so it
-links against Termux's own musl loader, then wires opencode into the
-environment so it knows it's on a patched Bionic/aarch64 setup and can
-self-diagnose failures (segfaults, invalid ELF, grep/ripgrep dying) instead of
-guessing.
+links against Termux's own musl loader, then wraps launch so the musl
+runtime never leaks into the Bionic children opencode spawns.
 
 > Unofficial, community project — not affiliated with or endorsed by the
 > opencode authors. Ships no binary: `install.sh` downloads the aarch64 musl
@@ -13,18 +11,22 @@ guessing.
 > releases (version + SHA-256 taken from its npm `release-checksums.json`) and
 > patches it locally.
 
-## Why this exists
+## What it does
 
-- opencode publishes no `android-arm64`/Bionic build. The community
-  `opencode-termux` build is musl-linked, and its ELF interpreter must be
-  patched to the musl loader shipped beside it.
-- The stock npm launcher exported `LD_PRELOAD`/`LD_LIBRARY_PATH`, which broke
-  the Bionic `bash`/`ripgrep` that opencode itself spawns. This repo replaces
-  it with a wrapper that scopes the library path to a single `exec`
-  (`--library-path`), so nothing leaks into children.
-- opencode's autoupdater would silently swap in an unpatched build. This repo
-  disables it (`OPENCODE_DISABLE_AUTOUPDATE=1` + config) and provides a
-  verified `termux-update-opencode` path instead, with rollback.
+1. **Downloads and patches the musl build** — fetches the aarch64 build,
+   verifies its SHA-256, and patches the ELF interpreter to the musl loader
+   that ships beside it (`~/.opencode/ld-musl-aarch64.so.1`).
+2. **Installs a wrapper** — `$PREFIX/bin/opencode` execs the loader with
+   `--library-path`, scoping the musl runtime to that single `exec` so it can't
+   leak into the Bionic `bash`/`ripgrep` opencode spawns (the leak that breaks
+   the stock opencode-termux npm launcher).
+3. **Disables the autoupdater** — `OPENCODE_DISABLE_AUTOUPDATE=1` in the
+   wrapper plus `"autoupdate": false` in `~/.config/opencode/opencode.jsonc`,
+   so opencode can't silently swap in an unpatched build.
+4. **Installs environment notes** — merges `environment.md.template` into
+   `~/.config/opencode/environment.md` inside begin/end markers, and points
+   opencode's global `instructions` at it, so every session knows it's on a
+   patched-musl/Termux setup.
 
 ## Install
 
@@ -37,74 +39,37 @@ bash install.sh
 
 Then run `opencode`.
 
-## What install.sh does
-
-1. Installs deps (`curl jq patchelf ripgrep tar coreutils file ca-certificates ...`).
-2. Downloads and SHA-256-verifies the aarch64 musl build, patches the ELF
-   interpreter to `~/.opencode/ld-musl-aarch64.so.1`, and stages it under
-   `~/.opencode/opencode-native/`.
-3. Installs the `opencode` wrapper into `$PREFIX/bin` (loader
-   `--library-path`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `TMPDIR`).
-4. Wires `autocheck.sh` into `~/.bashrc` — self-heal + update check on each new
-   shell (opencode has no hook system).
-5. Sets `"autoupdate": false` in `~/.config/opencode/opencode.jsonc` (previous
-   version backed up).
-6. Merges `environment.md.template` into `~/.config/opencode/environment.md`
-   (wired in via `instructions`) and installs the `opencode-termux-doctor`
-   skill.
-
 ## Commands
 
 - `opencode` — the patched binary, via the wrapper.
-- `termux-update-opencode` — download → verify → patch → install, with rollback.
-- `termux-opencode-features status|enable|disable` — opt-in features.
-- `termux-opencode-job` — headless `opencode run` on Android's JobScheduler
-  (not plain cron, which Android kills when the screen locks).
-
-## Extra features (opt-in)
-
-- **adb-bridge** — see and drive the *entire* Android screen (screenshots,
-  exact-coordinate `uiautomator` dumps, tap/swipe, full-system logcat) through
-  [termux-adb-bridge](https://github.com/jronminh/termux-adb-bridge)'s
-  shell-UID daemon (`dsh`) — no Shizuku, no `adb`. Security-sensitive
-  (commands run at the `shell` UID). `termux-opencode-features enable
-  adb-bridge` (requires termux-adb-bridge installed and its daemon running).
-- **notifications** — n/a: opencode has no settings.json hook system.
+- `termux-update-opencode` — download → verify → patch → install.
 
 ## Layout
 
 ```
-~/.opencode/opencode                  # patched binary
-~/.opencode/ld-musl-aarch64.so.1      # + libc/libstdc++/libgcc beside it
-~/.opencode/opencode-native/          # doctor.sh, autocheck.sh, update.sh, jobs
-~/.config/opencode/opencode.jsonc     # global config (autoupdate off)
-~/.config/opencode/environment.md     # managed notes (begin/end markers)
-~/.config/opencode/skills/            # opencode-termux-doctor, adb-bridge
-$PREFIX/bin/opencode                  # wrapper
-$PREFIX/bin/termux-{update-,}opencode-*
+~/.opencode/opencode                        # patched binary
+~/.opencode/ld-musl-aarch64.so.1            # + libc/libstdc++/libgcc beside it
+~/.opencode/opencode-native/download.sh     # download + SHA-256 verify only
+~/.opencode/opencode-native/install.sh      # extract + patch + smoke test + install
+~/.opencode/opencode-native/lib.sh          # shared step/banner helpers
+~/.opencode/opencode-native/environment.md.template  # managed env-notes source
+~/.config/opencode/opencode.jsonc           # global config (autoupdate off)
+~/.config/opencode/environment.md           # managed notes (begin/end markers)
+$PREFIX/bin/opencode                        # wrapper
+$PREFIX/bin/termux-update-opencode          # update command (re-runs install.sh)
 ```
 
-## Doctor / troubleshooting
+## Uninstall
 
-`bash ~/.opencode/opencode-native/doctor.sh` — checks the interpreter, leaked
-`LD_*`, autoupdater state, Termux freshness, disk space, and the adb-bridge
-daemon.
-
-If opencode segfaults on launch, reports `invalid ELF header`, has grep/ripgrep
-dying mid-tool-call, or an update breaks it: invoke the `opencode-termux-doctor`
-skill (or run `doctor.sh`) **before** hand-editing anything under
-`~/.opencode/opencode-native/` or `$PREFIX/bin/opencode`.
+```sh
+bash uninstall.sh          # remove the wrapper + config edit, keep app + libs
+bash uninstall.sh --full   # also remove ~/.opencode/opencode-native + backups
+```
 
 ## Requirements
 
 - Android/Termux **aarch64**, Termux from F-Droid or GitHub (not Play Store).
 - ~200 MB for the patched binary plus the musl runtime libs.
-
-## Credits
-
-Built with AI assistance from **Claude** (Anthropic) and **DeepSeek**
-(`deepseek-v4-flash`, via opencode). All design decisions, review, and testing
-are the maintainer's.
 
 ## License
 
