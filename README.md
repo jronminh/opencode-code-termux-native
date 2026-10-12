@@ -30,6 +30,14 @@ runtime never leaks into the Bionic children opencode spawns.
 
 ## Install
 
+One line:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jronminh/opencode-code-termux-native/main/bootstrap.sh | bash
+```
+
+Or clone and run it yourself:
+
 ```sh
 pkg install -y git
 git clone https://github.com/jronminh/opencode-code-termux-native.git
