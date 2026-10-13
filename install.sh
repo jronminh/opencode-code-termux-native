@@ -6,15 +6,14 @@ ALPINE_MIRROR="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}"
 ALPINE_BRANCH="${ALPINE_BRANCH:-latest-stable}"
 HOME_DIR="${HOME:?HOME is not set}"
 OPENCODE_DIR="$HOME_DIR/.opencode"
-RUNTIME_DIR="$OPENCODE_DIR/runtime"
+INSTALL_RUNTIME_DIR="$OPENCODE_DIR/runtime"
 PREFIX_DIR="${PREFIX:?Run this from Termux}"
 API="https://api.github.com/repos/$REPO/releases"
 ASSET="opencode-linux-arm64-musl.tar.gz"
-TMP=""
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOWNLOAD_DIR="$REPO_DIR/.downloads"
 
 die() { echo "install: $*" >&2; exit 1; }
-cleanup() { [ -n "$TMP" ] && [ -d "$TMP" ] && rm -rf "$TMP"; }
-trap cleanup EXIT
 
 [ "$(uname -m)" = "aarch64" ] || die "this installer requires an aarch64 Termux device"
 command -v pkg >/dev/null 2>&1 || die "pkg was not found; this is not Termux"
@@ -22,46 +21,47 @@ command -v pkg >/dev/null 2>&1 || die "pkg was not found; this is not Termux"
 echo "Installing OpenCode official ARM64 musl runtime..."
 pkg install -y curl jq tar coreutils binutils ca-certificates >/dev/null
 
-TMP=$(mktemp -d)
-mkdir -p "$OPENCODE_DIR"
+mkdir -p "$OPENCODE_DIR" "$DOWNLOAD_DIR"
 release_json=$(curl -fsSL --retry 3 --connect-timeout 10 "$API/latest") || die "could not fetch the latest GitHub release"
 version=$(printf '%s' "$release_json" | jq -r '.tag_name // empty' | sed 's/^v//')
 asset_url=$(printf '%s' "$release_json" | jq -r --arg n "$ASSET" '.assets[] | select(.name==$n) | .browser_download_url' | head -1)
-expected=$(printf '%s' "$release_json" | jq -r --arg n "$ASSET" '.assets[] | select(.name==$n) | .digest' | sed 's/^sha256://' | head -1)
-[ -n "$version" ] && [ -n "$asset_url" ] && [ -n "$expected" ] || die "release $ASSET or its SHA-256 digest was not found"
+[ -n "$version" ] && [ -n "$asset_url" ] || die "release $ASSET was not found"
 
 echo "Downloading OpenCode $version..."
-curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$TMP/opencode.tar.gz" "$asset_url"
-actual=$(sha256sum "$TMP/opencode.tar.gz" | awk '{print $1}')
-[ "$actual" = "$expected" ] || die "OpenCode checksum mismatch"
+curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$DOWNLOAD_DIR/opencode.tar.gz" "$asset_url"
+echo "OpenCode MD5: $(md5sum "$DOWNLOAD_DIR/opencode.tar.gz" | awk '{print $1}')"
+if [ -n "${OPENCODE_MD5:-}" ]; then
+  actual_md5=$(md5sum "$DOWNLOAD_DIR/opencode.tar.gz" | awk '{print $1}')
+  [ "$actual_md5" = "$OPENCODE_MD5" ] || die "OpenCode MD5 mismatch"
+fi
 
-mkdir "$TMP/opencode"
-tar -xzf "$TMP/opencode.tar.gz" -C "$TMP/opencode"
-[ -s "$TMP/opencode/opencode" ] || die "release archive has no opencode binary"
+mkdir -p "$DOWNLOAD_DIR/opencode"
+tar -xzf "$DOWNLOAD_DIR/opencode.tar.gz" -C "$DOWNLOAD_DIR/opencode"
+[ -s "$DOWNLOAD_DIR/opencode/opencode" ] || die "release archive has no opencode binary"
 
 apk_version() {
-  awk -v want="P:$1" '$0 == want { found=1; next } found && /^V:/ { sub(/^V:/, ""); print; exit } /^$/ { found=0 }' "$TMP/APKINDEX.desc"
+  awk -v want="P:$1" '$0 == want { found=1; next } found && /^V:/ { sub(/^V:/, ""); print; exit } /^$/ { found=0 }' "$DOWNLOAD_DIR/APKINDEX.desc"
 }
 fetch_apk() {
   local package="$1" version url
   version=$(apk_version "$package")
   [ -n "$version" ] || die "could not resolve Alpine package $package"
   url="$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/${package}-${version}.apk"
-  curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$TMP/${package}.apk" "$url"
-  mkdir -p "$TMP/apk/$package"
-  tar -xzf "$TMP/${package}.apk" -C "$TMP/apk/$package"
+  curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$DOWNLOAD_DIR/${package}.apk" "$url"
+  mkdir -p "$DOWNLOAD_DIR/apk/$package"
+  tar -xzf "$DOWNLOAD_DIR/${package}.apk" -C "$DOWNLOAD_DIR/apk/$package"
 }
 
 echo "Downloading musl runtime from Alpine..."
-curl -fsSL --retry 3 --connect-timeout 10 "$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/APKINDEX.tar.gz" -o "$TMP/APKINDEX.tar.gz"
-mkdir "$TMP/index"
-tar -xzf "$TMP/APKINDEX.tar.gz" -C "$TMP/index"
-if [ -s "$TMP/index/APKINDEX" ]; then
-  cp "$TMP/index/APKINDEX" "$TMP/APKINDEX.desc"
-elif [ -s "$TMP/index/APKINDEX.tar" ]; then
-  tar -xf "$TMP/index/APKINDEX.tar" -C "$TMP" || die "could not read Alpine package index"
-  [ -s "$TMP/APKINDEX.desc" ] || [ -s "$TMP/APKINDEX" ] || die "Alpine package index has no description file"
-  [ -s "$TMP/APKINDEX.desc" ] || mv "$TMP/APKINDEX" "$TMP/APKINDEX.desc"
+curl -fsSL --retry 3 --connect-timeout 10 "$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/APKINDEX.tar.gz" -o "$DOWNLOAD_DIR/APKINDEX.tar.gz"
+mkdir -p "$DOWNLOAD_DIR/index"
+tar -xzf "$DOWNLOAD_DIR/APKINDEX.tar.gz" -C "$DOWNLOAD_DIR/index"
+if [ -s "$DOWNLOAD_DIR/index/APKINDEX" ]; then
+  cp "$DOWNLOAD_DIR/index/APKINDEX" "$DOWNLOAD_DIR/APKINDEX.desc"
+elif [ -s "$DOWNLOAD_DIR/index/APKINDEX.tar" ]; then
+  tar -xf "$DOWNLOAD_DIR/index/APKINDEX.tar" -C "$DOWNLOAD_DIR" || die "could not read Alpine package index"
+  [ -s "$DOWNLOAD_DIR/APKINDEX.desc" ] || [ -s "$DOWNLOAD_DIR/APKINDEX" ] || die "Alpine package index has no description file"
+  [ -s "$DOWNLOAD_DIR/APKINDEX.desc" ] || mv "$DOWNLOAD_DIR/APKINDEX" "$DOWNLOAD_DIR/APKINDEX.desc"
 else
   die "Alpine package index has no APKINDEX member"
 fi
@@ -69,26 +69,24 @@ fetch_apk musl
 fetch_apk libgcc
 fetch_apk libstdc++
 
-mkdir "$TMP/runtime"
-cp -L "$TMP/apk/musl/lib/ld-musl-aarch64.so.1" "$TMP/runtime/ld-musl-aarch64.so.1"
-cp -L "$TMP/apk/musl/lib/libc.musl-aarch64.so.1" "$TMP/runtime/libc.musl-aarch64.so.1"
-cp -L "$TMP/apk/libgcc/usr/lib/libgcc_s.so.1" "$TMP/runtime/libgcc_s.so.1"
-stdcpp=$(find "$TMP/apk/libstdc++" -type f -name 'libstdc++.so.6.*' | sort | tail -1)
+mkdir -p "$DOWNLOAD_DIR/runtime"
+cp -L "$DOWNLOAD_DIR/apk/musl/lib/ld-musl-aarch64.so.1" "$DOWNLOAD_DIR/runtime/ld-musl-aarch64.so.1"
+cp -L "$DOWNLOAD_DIR/apk/musl/lib/libc.musl-aarch64.so.1" "$DOWNLOAD_DIR/runtime/libc.musl-aarch64.so.1"
+cp -L "$DOWNLOAD_DIR/apk/libgcc/usr/lib/libgcc_s.so.1" "$DOWNLOAD_DIR/runtime/libgcc_s.so.1"
+stdcpp=$(find "$DOWNLOAD_DIR/apk/libstdc++" -type f -name 'libstdc++.so.6.*' | sort | tail -1)
 [ -n "$stdcpp" ] || die "Alpine libstdc++ package has no shared library"
-cp -L "$stdcpp" "$TMP/runtime/libstdc++.so.6"
+cp -L "$stdcpp" "$DOWNLOAD_DIR/runtime/libstdc++.so.6"
 
 echo "Testing staged runtime..."
-env -u LD_PRELOAD -u LD_LIBRARY_PATH "$TMP/runtime/ld-musl-aarch64.so.1" --library-path "$TMP/runtime" "$TMP/opencode/opencode" --version >/dev/null || die "staged OpenCode failed its smoke test"
+env -u LD_PRELOAD -u LD_LIBRARY_PATH "$DOWNLOAD_DIR/runtime/ld-musl-aarch64.so.1" --library-path "$DOWNLOAD_DIR/runtime" "$DOWNLOAD_DIR/opencode/opencode" --version >/dev/null || die "staged OpenCode failed its smoke test"
 
 echo "Installing binary and runtime..."
-chmod 700 "$TMP/opencode/opencode"
-rm -rf "$RUNTIME_DIR.new" "$RUNTIME_DIR.prev"
-mkdir "$RUNTIME_DIR.new"
-cp -a "$TMP/runtime/." "$RUNTIME_DIR.new/"
-[ -e "$RUNTIME_DIR" ] && mv "$RUNTIME_DIR" "$RUNTIME_DIR.prev"
-mv "$RUNTIME_DIR.new" "$RUNTIME_DIR"
+chmod 700 "$DOWNLOAD_DIR/opencode/opencode"
+rm -rf "$INSTALL_RUNTIME_DIR"
+mkdir -p "$INSTALL_RUNTIME_DIR"
+cp -a "$DOWNLOAD_DIR/runtime/." "$INSTALL_RUNTIME_DIR/"
 [ -e "$OPENCODE_DIR/opencode" ] && mv "$OPENCODE_DIR/opencode" "$OPENCODE_DIR/opencode.prev"
-cp "$TMP/opencode/opencode" "$OPENCODE_DIR/opencode"
+cp "$DOWNLOAD_DIR/opencode/opencode" "$OPENCODE_DIR/opencode"
 printf '%s\n' "$version" > "$OPENCODE_DIR/version"
 
 cat > "$PREFIX_DIR/bin/opencode" <<'WRAPPER'

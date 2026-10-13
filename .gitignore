@@ -2,6 +2,7 @@
 # a clone of this repo.
 opencode
 opencode.prev
+.downloads/
 *.lock
 *.log
 

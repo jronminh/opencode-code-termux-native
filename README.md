@@ -14,16 +14,17 @@ It then runs OpenCode through the musl loader with a private
 
 ## Install
 
-One-line install:
+Clone and install in one line. Downloads are kept under the clone's
+`.downloads/` directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/jronminh/opencode-code-termux-native/main/install.sh | bash
+git clone https://github.com/jronminh/opencode-code-termux-native.git ~/opencode-code-termux-native && bash ~/opencode-code-termux-native/install.sh
 ```
 
 Or clone and run locally:
 
 ```sh
-bash install.sh
+bash ~/opencode-code-termux-native/install.sh
 ```
 
 Run `install.sh` again to update. It is the only installer/update path.
