@@ -1,163 +1,113 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Installs OpenCode natively on Termux/Android.
-#
-# What this actually does: takes the official aarch64 musl OpenCode release,
-# stages a matching musl/libgcc/libstdc++ runtime, and wraps launch in a
-# loader --library-path call so the musl runtime never leaks into Bionic child
-# processes. See README.md for the full story.
-#
-# Safe to re-run: every step is idempotent. To undo everything, see
-# uninstall.sh.
 set -euo pipefail
 
-if [ "$#" -ne 0 ]; then
-  echo "usage: install.sh" >&2
-  exit 2
-fi
+REPO="${OPENCODE_REPO:-anomalyco/opencode}"
+ALPINE_MIRROR="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}"
+ALPINE_BRANCH="${ALPINE_BRANCH:-latest-stable}"
+HOME_DIR="${HOME:?HOME is not set}"
+OPENCODE_DIR="$HOME_DIR/.opencode"
+RUNTIME_DIR="$OPENCODE_DIR/runtime"
+PREFIX_DIR="${PREFIX:?Run this from Termux}"
+API="https://api.github.com/repos/$REPO/releases"
+ASSET="opencode-linux-arm64-musl.tar.gz"
+TMP=""
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="install.sh"
-TOTAL=10
-# shellcheck source=lib.sh
-source "$REPO_DIR/lib.sh"
+die() { echo "install: $*" >&2; exit 1; }
+cleanup() { [ -n "$TMP" ] && [ -d "$TMP" ] && rm -rf "$TMP"; }
+trap cleanup EXIT
 
-OPENCODE_DIR="$HOME/.opencode"
-DEST="$OPENCODE_DIR/opencode-native"
-CONFIG_DIR="$HOME/.config/opencode"
-CONFIG="$CONFIG_DIR/opencode.jsonc"
-ENV_NOTES="$CONFIG_DIR/environment.md"
-BIN_DIR="$PREFIX/bin"
-LD="$OPENCODE_DIR/runtime/ld-musl-aarch64.so.1"
+[ "$(uname -m)" = "aarch64" ] || die "this installer requires an aarch64 Termux device"
+command -v pkg >/dev/null 2>&1 || die "pkg was not found; this is not Termux"
 
-install_packages() {
-  # --force-confdef/--force-confold: this runs unattended (no TTY to answer
-  # dpkg's "keep your modified conffile?" prompt), so auto-keep the existing
-  # config instead of hanging/failing on upgrades like openssl's.
-  local opts=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-  pkg install "${opts[@]}" curl jq ripgrep tar coreutils file binutils ca-certificates resolv-conf &&
-    pkg update -y 2>/dev/null || true &&
-    pkg install "${opts[@]}" curl jq ripgrep tar coreutils file binutils ca-certificates resolv-conf &&
-    [ "$(command -v curl)" ]
+echo "Installing OpenCode official ARM64 musl runtime..."
+pkg install -y curl jq tar coreutils binutils ca-certificates >/dev/null
+
+TMP=$(mktemp -d)
+mkdir -p "$OPENCODE_DIR"
+release_json=$(curl -fsSL --retry 3 --connect-timeout 10 "$API/latest") || die "could not fetch the latest GitHub release"
+version=$(printf '%s' "$release_json" | jq -r '.tag_name // empty' | sed 's/^v//')
+asset_url=$(printf '%s' "$release_json" | jq -r --arg n "$ASSET" '.assets[] | select(.name==$n) | .browser_download_url' | head -1)
+expected=$(printf '%s' "$release_json" | jq -r --arg n "$ASSET" '.assets[] | select(.name==$n) | .digest' | sed 's/^sha256://' | head -1)
+[ -n "$version" ] && [ -n "$asset_url" ] && [ -n "$expected" ] || die "release $ASSET or its SHA-256 digest was not found"
+
+echo "Downloading OpenCode $version..."
+curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$TMP/opencode.tar.gz" "$asset_url"
+actual=$(sha256sum "$TMP/opencode.tar.gz" | awk '{print $1}')
+[ "$actual" = "$expected" ] || die "OpenCode checksum mismatch"
+
+mkdir "$TMP/opencode"
+tar -xzf "$TMP/opencode.tar.gz" -C "$TMP/opencode"
+[ -s "$TMP/opencode/opencode" ] || die "release archive has no opencode binary"
+
+apk_version() {
+  awk -v want="P:$1" '$0 == want { found=1; next } found && /^V:/ { sub(/^V:/, ""); print; exit } /^$/ { found=0 }' "$TMP/APKINDEX.desc"
+}
+fetch_apk() {
+  local package="$1" version url
+  version=$(apk_version "$package")
+  [ -n "$version" ] || die "could not resolve Alpine package $package"
+  url="$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/${package}-${version}.apk"
+  curl -fL --retry 5 --retry-all-errors --connect-timeout 10 -o "$TMP/${package}.apk" "$url"
+  mkdir -p "$TMP/apk/$package"
+  tar -xzf "$TMP/${package}.apk" -C "$TMP/apk/$package"
 }
 
-stage_scripts() {
-  mkdir -p "$DEST"
-  install -m 700 "$REPO_DIR/scripts/autocheck.sh"           "$DEST/autocheck.sh"
-  install -m 700 "$REPO_DIR/scripts/update.sh"               "$DEST/update.sh"
-  install -m 600 "$REPO_DIR/scripts/runtime.sh"              "$DEST/runtime.sh"
-  install -m 700 "$REPO_DIR/scripts/doctor.sh"               "$DEST/doctor.sh"
-  # docs/ — staged so this detail is available on-device on demand without
-  # needing the repo checkout.
-  if [ -d "$REPO_DIR/docs" ]; then
-    mkdir -p "$DEST/docs"
-    for f in "$REPO_DIR"/docs/*.md; do
-      [ -f "$f" ] || continue
-      install -m 600 "$f" "$DEST/docs/$(basename "$f")"
-    done
-  fi
-}
+echo "Downloading musl runtime from Alpine..."
+curl -fsSL --retry 3 --connect-timeout 10 "$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/APKINDEX.tar.gz" -o "$TMP/APKINDEX.tar.gz"
+mkdir "$TMP/index"
+tar -xzf "$TMP/APKINDEX.tar.gz" -C "$TMP/index"
+tar -xf "$TMP/index/APKINDEX.tar" -C "$TMP" || die "could not read Alpine package index"
+[ -s "$TMP/APKINDEX.desc" ] || [ -s "$TMP/APKINDEX" ] || die "Alpine package index has no description file"
+[ -s "$TMP/APKINDEX.desc" ] || mv "$TMP/APKINDEX" "$TMP/APKINDEX.desc"
+fetch_apk musl
+fetch_apk libgcc
+fetch_apk libstdc++
 
-install_wrapper() {
-  install -m 700 "$REPO_DIR/scripts/opencode-wrapper.sh"       "$BIN_DIR/opencode"
-  cat > "$BIN_DIR/termux-update-opencode" <<'CMD'
+mkdir "$TMP/runtime"
+cp -L "$TMP/apk/musl/lib/ld-musl-aarch64.so.1" "$TMP/runtime/ld-musl-aarch64.so.1"
+cp -L "$TMP/apk/musl/lib/libc.musl-aarch64.so.1" "$TMP/runtime/libc.musl-aarch64.so.1"
+cp -L "$TMP/apk/libgcc/usr/lib/libgcc_s.so.1" "$TMP/runtime/libgcc_s.so.1"
+stdcpp=$(find "$TMP/apk/libstdc++" -type f -name 'libstdc++.so.6.*' | sort | tail -1)
+[ -n "$stdcpp" ] || die "Alpine libstdc++ package has no shared library"
+cp -L "$stdcpp" "$TMP/runtime/libstdc++.so.6"
+
+echo "Testing staged runtime..."
+env -u LD_PRELOAD -u LD_LIBRARY_PATH "$TMP/runtime/ld-musl-aarch64.so.1" --library-path "$TMP/runtime" "$TMP/opencode/opencode" --version >/dev/null || die "staged OpenCode failed its smoke test"
+
+echo "Installing binary and runtime..."
+chmod 700 "$TMP/opencode/opencode"
+rm -rf "$RUNTIME_DIR.new" "$RUNTIME_DIR.prev"
+mkdir "$RUNTIME_DIR.new"
+cp -a "$TMP/runtime/." "$RUNTIME_DIR.new/"
+[ -e "$RUNTIME_DIR" ] && mv "$RUNTIME_DIR" "$RUNTIME_DIR.prev"
+mv "$RUNTIME_DIR.new" "$RUNTIME_DIR"
+[ -e "$OPENCODE_DIR/opencode" ] && mv "$OPENCODE_DIR/opencode" "$OPENCODE_DIR/opencode.prev"
+cp "$TMP/opencode/opencode" "$OPENCODE_DIR/opencode"
+printf '%s\n' "$version" > "$OPENCODE_DIR/version"
+
+cat > "$PREFIX_DIR/bin/opencode" <<'WRAPPER'
 #!/data/data/com.termux/files/usr/bin/bash
-exec "$HOME/.opencode/opencode-native/update.sh" "$@"
-CMD
-  chmod 700 "$BIN_DIR/termux-update-opencode"
-}
+set -e
+unset LD_PRELOAD LD_LIBRARY_PATH
+OPENCODE_DIR="${OPENCODE_DIR:-$HOME/.opencode}"
+RUNTIME_DIR="${OPENCODE_RUNTIME_DIR:-$OPENCODE_DIR/runtime}"
+export OPENCODE_DISABLE_AUTOUPDATE=1
+export SSL_CERT_FILE=/data/data/com.termux/files/usr/etc/tls/cert.pem
+export BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2=1
+export TMPDIR="${OPENCODE_TMPDIR:-$HOME/.cache/opencode-tmp}"
+mkdir -p "$TMPDIR"
+[ -x "$OPENCODE_DIR/opencode" ] || { echo "OpenCode is not installed; run install.sh" >&2; exit 1; }
+exec "$RUNTIME_DIR/ld-musl-aarch64.so.1" --library-path "$RUNTIME_DIR" "$OPENCODE_DIR/opencode" "$@"
+WRAPPER
+chmod 700 "$PREFIX_DIR/bin/opencode"
 
-wire_bashrc() {
-  local bashrc="$HOME/.bashrc"
-  touch "$bashrc"
-  grep -qF 'opencode-native/autocheck.sh' "$bashrc" ||
-    printf '\nsource "%s/autocheck.sh"\n' "$DEST" >> "$bashrc"
-}
+mkdir -p "$HOME_DIR/.config/opencode"
+config="$HOME_DIR/.config/opencode/opencode.jsonc"
+[ -e "$config" ] || printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$config"
+[ -e "$config.opencode-code-termux-native.bak" ] ||
+  cp -f "$config" "$config.opencode-code-termux-native.bak"
+tmp_config=$(mktemp)
+jq '.autoupdate = false' "$config" > "$tmp_config" && mv "$tmp_config" "$config"
+rm -rf "$OPENCODE_DIR/opencode-native"
 
-# opencode's own config has an autoupdate knob, and the wrapper exports
-# OPENCODE_DISABLE_AUTOUPDATE=1 too — both together are the analog of
-# claude's DISABLE_AUTOUPDATER. The in-process autoupdater would otherwise
-# silently drop in an unpatched build that can't run on Bionic.
-disable_autoupdater() {
-  mkdir -p "$CONFIG_DIR"
-  if [ -e "$CONFIG" ]; then
-    cp -f "$CONFIG" "$CONFIG.bak"
-  else
-    printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$CONFIG"
-  fi
-  local tmp; tmp=$(mktemp)
-  jq '.autoupdate = false' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
-}
-
-# Point opencode's global instructions at the environment notes so every
-# session knows it's on a patched-musl/Termux setup (the opencode analog of
-# claude's CLAUDE.md section). Preserves any existing instructions.
-point_instructions() {
-  mkdir -p "$CONFIG_DIR"
-  if [ -e "$CONFIG" ]; then
-    cp -f "$CONFIG" "$CONFIG.bak"
-  else
-    printf '{"$schema":"https://opencode.ai/config.json"}\n' > "$CONFIG"
-  fi
-  local tmp; tmp=$(mktemp)
-  jq --arg f "$ENV_NOTES" '.instructions = (((.instructions // []) + [$f]) | unique)' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
-}
-
-install_env_notes() {
-  env_notes_upsert "$REPO_DIR/environment.md.template" "$ENV_NOTES"
-}
-
-install_skill() {
-  local dir="$CONFIG_DIR/skills/opencode-termux-doctor"
-  mkdir -p "$dir"
-  install -m 600 "$REPO_DIR/skills/opencode-termux-doctor/SKILL.md" "$dir/SKILL.md"
-}
-
-# Opt-in only (security-sensitive — see skills/adb-bridge/SKILL.md). The
-# script itself is always staged by stage_scripts; this wires the skill.
-echo "${BOLD}opencode-code-termux-native${RESET} — installing OpenCode natively on Termux"
-echo
-
-step "checking platform"                                   check_platform
-step "installing Termux packages"                          install_packages
-step "staging self-repair scripts at $(shortp "$DEST")"    stage_scripts
-
-N=$((N + 1))
-bash "$DEST/update.sh" || fail "initial download/patch failed — run: bash $(shortp "$DEST")/doctor.sh"
-step_banner "downloading and patching the opencode binary"
-printf '%sok%s\n' "$GREEN" "$RESET"
-
-step "installing wrapper + update command"                  install_wrapper
-step "wiring autocheck.sh into ~/.bashrc"                   wire_bashrc
-step "disabling the in-process autoupdater"                 disable_autoupdater
-step "installing environment notes + global config pointer" install_env_notes
-step "pointing opencode at the environment notes"           point_instructions
-step "installing the opencode-termux-doctor skill"          install_skill
-
-rm -f "$LOG"
-trap - ERR
-echo
-echo "${GREEN}${BOLD}install complete${RESET}"
-echo "  ${DIM}1.${RESET} open a NEW Termux session (or run: exec bash)"
-echo "  ${DIM}2.${RESET} run: ${BOLD}opencode${RESET}"
-echo
-printf '  %-18s: %s\n' "verify anytime"    "${DIM}bash $(shortp "$DEST")/doctor.sh${RESET}"
-printf '  %-18s: %s\n' "check for updates" "${DIM}termux-update-opencode${RESET}"
-printf '  %-18s: %s\n' "uninstall"         "${DIM}bash $(shortp "$REPO_DIR")/uninstall.sh${RESET}"
-echo
-echo "  Environment notes were added to ~/.config/opencode/environment.md"
-echo "  (wired into your global opencode.json instructions), and the"
-echo "  opencode-termux-doctor skill was installed, so opencode recognizes"
-echo "  this setup (and its quirks) and knows how to self-diagnose."
-echo
-echo "  The wrapper (and autocheck.sh) lock the autoupdater off, so an"
-echo "  in-process update can't silently replace the patched binary with an"
-echo "  unpatched one. Update deliberately with: termux-update-opencode."
-
-if kernel_is_risky && ! epoll_fix_present "$OPENCODE_DIR/opencode"; then
-  echo
-  echo "${DIM}note:${RESET} kernel $(uname -r) is 5.11+, and this build of opencode predates"
-  echo "  the upstream fix for a Bun TLS-fault crash on epoll_pwait2 (bun#32490) —"
-  echo "  it may segfault right at launch on some devices. The wrapper already"
-  echo "  sets BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2=1; if it still crashes, see"
-  echo "  README.md (\"Troubleshooting\")."
-fi
+echo "Installed OpenCode $version. Run: opencode"
