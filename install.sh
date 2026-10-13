@@ -10,20 +10,16 @@
 # uninstall.sh.
 set -euo pipefail
 
-WITH_ADB_BRIDGE=0
-for arg in "$@"; do
-  case "$arg" in
-    --with-adb-bridge) WITH_ADB_BRIDGE=1 ;;
-    *) echo "usage: install.sh [--with-adb-bridge]" >&2; exit 2 ;;
-  esac
-done
+if [ "$#" -ne 0 ]; then
+  echo "usage: install.sh" >&2
+  exit 2
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="install.sh"
 TOTAL=10
-[ "$WITH_ADB_BRIDGE" = "1" ] && TOTAL=$((TOTAL + 1))
-# shellcheck source=scripts/lib.sh
-source "$REPO_DIR/scripts/lib.sh"
+# shellcheck source=lib.sh
+source "$REPO_DIR/lib.sh"
 
 OPENCODE_DIR="$HOME/.opencode"
 DEST="$OPENCODE_DIR/opencode-native"
@@ -50,29 +46,24 @@ stage_scripts() {
   install -m 700 "$REPO_DIR/scripts/update.sh"               "$DEST/update.sh"
   install -m 600 "$REPO_DIR/scripts/runtime.sh"              "$DEST/runtime.sh"
   install -m 700 "$REPO_DIR/scripts/doctor.sh"               "$DEST/doctor.sh"
-  install -m 700 "$REPO_DIR/scripts/adb-bridge.sh"           "$DEST/adb-bridge.sh"
-  install -m 700 "$REPO_DIR/scripts/feature-hooks.sh"        "$DEST/feature-hooks.sh"
-  install -m 700 "$REPO_DIR/scripts/opencode-features.sh"    "$DEST/opencode-features.sh"
-  install -m 700 "$REPO_DIR/scripts/opencode-job-runner.sh"  "$DEST/opencode-job-runner.sh"
-  # Skill sources for features that install a skill (currently just
-  # adb-bridge): staged unconditionally, so `termux-opencode-features enable
-  # adb-bridge` works later even if --with-adb-bridge wasn't passed at
-  # install time (or the repo checkout this ran from is long gone by then).
-  mkdir -p "$DEST/skill-sources/adb-bridge"
-  install -m 600 "$REPO_DIR/skills/adb-bridge/SKILL.md" "$DEST/skill-sources/adb-bridge/SKILL.md"
   # docs/ — staged so this detail is available on-device on demand without
   # needing the repo checkout.
-  mkdir -p "$DEST/docs"
-  for f in "$REPO_DIR"/docs/*.md; do
-    install -m 600 "$f" "$DEST/docs/$(basename "$f")"
-  done
+  if [ -d "$REPO_DIR/docs" ]; then
+    mkdir -p "$DEST/docs"
+    for f in "$REPO_DIR"/docs/*.md; do
+      [ -f "$f" ] || continue
+      install -m 600 "$f" "$DEST/docs/$(basename "$f")"
+    done
+  fi
 }
 
 install_wrapper() {
   install -m 700 "$REPO_DIR/scripts/opencode-wrapper.sh"       "$BIN_DIR/opencode"
-  install -m 700 "$REPO_DIR/scripts/termux-update-opencode.sh" "$BIN_DIR/termux-update-opencode"
-  install -m 700 "$REPO_DIR/scripts/opencode-job.sh"           "$BIN_DIR/termux-opencode-job"
-  install -m 700 "$REPO_DIR/scripts/termux-opencode-features.sh" "$BIN_DIR/termux-opencode-features"
+  cat > "$BIN_DIR/termux-update-opencode" <<'CMD'
+#!/data/data/com.termux/files/usr/bin/bash
+exec "$HOME/.opencode/opencode-native/update.sh" "$@"
+CMD
+  chmod 700 "$BIN_DIR/termux-update-opencode"
 }
 
 wire_bashrc() {
@@ -123,10 +114,6 @@ install_skill() {
 
 # Opt-in only (security-sensitive — see skills/adb-bridge/SKILL.md). The
 # script itself is always staged by stage_scripts; this wires the skill.
-install_adb_bridge() {
-  enable_adb_bridge "$REPO_DIR/skills/adb-bridge/SKILL.md" "$CONFIG_DIR/skills"
-}
-
 echo "${BOLD}opencode-code-termux-native${RESET} — installing OpenCode natively on Termux"
 echo
 
@@ -139,15 +126,12 @@ bash "$DEST/update.sh" || fail "initial download/patch failed — run: bash $(sh
 step_banner "downloading and patching the opencode binary"
 printf '%sok%s\n' "$GREEN" "$RESET"
 
-step "installing wrapper + termux-opencode-* commands"     install_wrapper
+step "installing wrapper + update command"                  install_wrapper
 step "wiring autocheck.sh into ~/.bashrc"                   wire_bashrc
 step "disabling the in-process autoupdater"                 disable_autoupdater
 step "installing environment notes + global config pointer" install_env_notes
 step "pointing opencode at the environment notes"           point_instructions
 step "installing the opencode-termux-doctor skill"          install_skill
-if [ "$WITH_ADB_BRIDGE" = "1" ]; then
-  step "installing the optional ADB bridge skill"            install_adb_bridge
-fi
 
 rm -f "$LOG"
 trap - ERR
@@ -158,8 +142,6 @@ echo "  ${DIM}2.${RESET} run: ${BOLD}opencode${RESET}"
 echo
 printf '  %-18s: %s\n' "verify anytime"    "${DIM}bash $(shortp "$DEST")/doctor.sh${RESET}"
 printf '  %-18s: %s\n' "check for updates" "${DIM}termux-update-opencode${RESET}"
-printf '  %-18s: %s\n' "schedule a job"    "${DIM}termux-opencode-job add <name> --prompt \"...\" --period-ms 900000${RESET}"
-printf '  %-18s: %s\n' "toggle a feature"  "${DIM}termux-opencode-features {status|enable|disable} <feature>${RESET}"
 printf '  %-18s: %s\n' "uninstall"         "${DIM}bash $(shortp "$REPO_DIR")/uninstall.sh${RESET}"
 echo
 echo "  Environment notes were added to ~/.config/opencode/environment.md"
@@ -170,20 +152,6 @@ echo
 echo "  The wrapper (and autocheck.sh) lock the autoupdater off, so an"
 echo "  in-process update can't silently replace the patched binary with an"
 echo "  unpatched one. Update deliberately with: termux-update-opencode."
-
-if [ "$WITH_ADB_BRIDGE" = "1" ]; then
-  echo
-  echo "  The adb-bridge skill was installed. This is security-sensitive"
-  echo "  (commands run at the shell UID via the termux-adb-bridge daemon) —"
-  echo "  see the skill's \"Security posture\" section."
-  echo "  Turn off anytime: ${BOLD}termux-opencode-features disable adb-bridge${RESET}."
-else
-  echo
-  echo "  Tip: ${BOLD}termux-opencode-features enable adb-bridge${RESET} lets opencode see and"
-  echo "  drive the full Android screen through the termux-adb-bridge shell-UID"
-  echo "  daemon (screenshots, exact-coordinate taps, full-system logcat) —"
-  echo "  opt-in, security-sensitive."
-fi
 
 if kernel_is_risky && ! epoll_fix_present "$OPENCODE_DIR/opencode"; then
   echo
