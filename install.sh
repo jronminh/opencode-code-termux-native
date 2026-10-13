@@ -56,9 +56,15 @@ echo "Downloading musl runtime from Alpine..."
 curl -fsSL --retry 3 --connect-timeout 10 "$ALPINE_MIRROR/$ALPINE_BRANCH/main/aarch64/APKINDEX.tar.gz" -o "$TMP/APKINDEX.tar.gz"
 mkdir "$TMP/index"
 tar -xzf "$TMP/APKINDEX.tar.gz" -C "$TMP/index"
-tar -xf "$TMP/index/APKINDEX.tar" -C "$TMP" || die "could not read Alpine package index"
-[ -s "$TMP/APKINDEX.desc" ] || [ -s "$TMP/APKINDEX" ] || die "Alpine package index has no description file"
-[ -s "$TMP/APKINDEX.desc" ] || mv "$TMP/APKINDEX" "$TMP/APKINDEX.desc"
+if [ -s "$TMP/index/APKINDEX" ]; then
+  cp "$TMP/index/APKINDEX" "$TMP/APKINDEX.desc"
+elif [ -s "$TMP/index/APKINDEX.tar" ]; then
+  tar -xf "$TMP/index/APKINDEX.tar" -C "$TMP" || die "could not read Alpine package index"
+  [ -s "$TMP/APKINDEX.desc" ] || [ -s "$TMP/APKINDEX" ] || die "Alpine package index has no description file"
+  [ -s "$TMP/APKINDEX.desc" ] || mv "$TMP/APKINDEX" "$TMP/APKINDEX.desc"
+else
+  die "Alpine package index has no APKINDEX member"
+fi
 fetch_apk musl
 fetch_apk libgcc
 fetch_apk libstdc++
