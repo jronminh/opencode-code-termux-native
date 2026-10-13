@@ -77,9 +77,6 @@ stdcpp=$(find "$DOWNLOAD_DIR/apk/libstdc++" -type f -name 'libstdc++.so.6.*' | s
 [ -n "$stdcpp" ] || die "Alpine libstdc++ package has no shared library"
 cp -L "$stdcpp" "$DOWNLOAD_DIR/runtime/libstdc++.so.6"
 
-echo "Testing staged runtime..."
-env -u LD_PRELOAD -u LD_LIBRARY_PATH "$DOWNLOAD_DIR/runtime/ld-musl-aarch64.so.1" --library-path "$DOWNLOAD_DIR/runtime" "$DOWNLOAD_DIR/opencode/opencode" --version >/dev/null || die "staged OpenCode failed its smoke test"
-
 echo "Installing binary and runtime..."
 chmod 700 "$DOWNLOAD_DIR/opencode/opencode"
 rm -rf "$INSTALL_RUNTIME_DIR"
@@ -113,5 +110,10 @@ config="$HOME_DIR/.config/opencode/opencode.jsonc"
 tmp_config=$(mktemp)
 jq '.autoupdate = false' "$config" > "$tmp_config" && mv "$tmp_config" "$config"
 rm -rf "$OPENCODE_DIR/opencode-native"
+
+echo "Running final smoke test on the installed runtime..."
+env -u LD_PRELOAD -u LD_LIBRARY_PATH "$INSTALL_RUNTIME_DIR/ld-musl-aarch64.so.1" \
+  --library-path "$INSTALL_RUNTIME_DIR" "$OPENCODE_DIR/opencode" --version >/dev/null \
+  || die "installed OpenCode failed its final smoke test"
 
 echo "Installed OpenCode $version. Run: opencode"
