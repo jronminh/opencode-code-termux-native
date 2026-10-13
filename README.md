@@ -14,6 +14,14 @@ It then runs OpenCode through the musl loader with a private
 
 ## Install
 
+One-line install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jronminh/opencode-code-termux-native/main/install.sh | bash
+```
+
+Or clone and run locally:
+
 ```sh
 bash install.sh
 ```
